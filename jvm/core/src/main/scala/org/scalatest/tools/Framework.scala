@@ -413,11 +413,29 @@ class Framework extends SbtFramework {
       }
     }
 
-    lazy val suiteClass = loadSuiteClass
-    lazy val accessible = isAccessibleSuite(suiteClass)
-    lazy val runnable = isRunnable(suiteClass)
-    lazy val shouldDiscover =
+    val suiteClass = loadSuiteClass
+    val accessible = isAccessibleSuite(suiteClass)
+    val runnable = isRunnable(suiteClass)
+    val shouldDiscover =
       taskDefinition.explicitlySpecified || ((accessible || runnable) && isDiscoverableSuite(suiteClass))
+
+    val suite =
+      try {
+        if (runnable) { // When it is runnable WrapWith is available, this will take precedence and this behavior will be consistent with Runner and the old ScalaTestFramework.
+          val wrapWithAnnotation = suiteClass.getAnnotation(classOf[WrapWith])
+          val suiteClazz = wrapWithAnnotation.value
+          val constructorList = suiteClazz.getDeclaredConstructors()
+          val constructor = constructorList.find { c =>
+            val types = c.getParameterTypes
+            types.length == 1 && types(0) == classOf[java.lang.Class[_]]
+          }
+          constructor.get.newInstance(suiteClass).asInstanceOf[Suite]
+        }
+        else
+          suiteClass.newInstance.asInstanceOf[Suite]
+      } catch {
+        case t: Throwable => new DeferredAbortedSuite(suiteClass.getName, suiteClass.getName, t)
+      }
 
     def tags =
       for {
@@ -438,24 +456,6 @@ class Framework extends SbtFramework {
 
     def execute(eventHandler: EventHandler, loggers: Array[Logger]) = {
       if (accessible || runnable) {
-        val suite =
-          try {
-            if (runnable) { // When it is runnable WrapWith is available, this will take precedence and this behavior will be consistent with Runner and the old ScalaTestFramework.
-              val wrapWithAnnotation = suiteClass.getAnnotation(classOf[WrapWith])
-              val suiteClazz = wrapWithAnnotation.value
-              val constructorList = suiteClazz.getDeclaredConstructors()
-              val constructor = constructorList.find { c =>
-                val types = c.getParameterTypes
-                types.length == 1 && types(0) == classOf[java.lang.Class[_]]
-              }
-              constructor.get.newInstance(suiteClass).asInstanceOf[Suite]
-            }
-            else
-              suiteClass.newInstance.asInstanceOf[Suite]
-          } catch {
-            case t: Throwable => new DeferredAbortedSuite(suiteClass.getName, suiteClass.getName, t)
-          }
-
         if (useSbtLogInfoReporter) {
           val sbtLogInfoReporter =
             new FilterReporter(
